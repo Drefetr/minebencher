@@ -1,0 +1,39 @@
+# Bytecode and Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Results and experiment databases
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+results.db
+losses.jsonl
+
+# Candidate agents: track only baseline controls and starter template
+agents/*
+!agents/_template.py
+!agents/oracle.py
+!agents/random.py
+
+# Benchmarks, experiment databases, and reports
+benchmarks/*
+!benchmarks/.gitkeep
+
+# Proprietary Windows XP binaries (user must provide their own WINMINE.EXE)
+bin/*
+!bin/.gitkeep
+
+# Development and reverse-engineering scaffolding
+src/tools/disasm.py
+src/tools/static_map.py
+src/tools/xref.py
+src/tools/exercise.py
+src/tools/edge_cases.py
+
+# Editor and environment
+.vscode/
+.idea/
+*.swp
+*~
