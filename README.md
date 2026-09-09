@@ -138,4 +138,4 @@ python src/tools/report.py
 ## License
 
 This project is released under the [MIT License](LICENSE).
-Copyright (c) 2026 David Carey.
+Copyright (c) 2026 DRIFTER INDUSTRIAL.
