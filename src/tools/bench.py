@@ -13,6 +13,8 @@ also unioned into benchmarks/results_cumulative.db and benchmarks/report_cumulat
     python src/tools/bench.py --games 200 --all-levels
     python src/tools/bench.py --only deductive --level expert
 """
+from __future__ import annotations
+
 import argparse
 import sys
 import uuid
@@ -62,9 +64,10 @@ def main():
     ap.add_argument("--db", type=Path, default=DEFAULT_DB,
                     help="cumulative database path (default: benchmarks/results_cumulative.db)")
     ap.add_argument("--no-record", action="store_true")
-    ap.add_argument("--log-losses", type=Path, default=None)
     ap.add_argument("--progress-every", type=int, default=0)
     args = ap.parse_args()
+    if args.games <= 0:
+        ap.error("--games must be greater than zero")
 
     try:
         agents = roster(found, extra=_candidates(found, args.only))
@@ -102,17 +105,19 @@ def main():
                   f"{len(levels)} level(s), N={args.games}\n")
             for reg in agents:
                 agent = instantiate(reg, args.seed)
-                info = describe(agent)
-                role = (info.baseline or "candidate").upper()
-                print(f"--- {role}  {info.fingerprint}  {info.label} ---")
-                for level in levels:
-                    stats, _ = run_and_record(
-                        session, agent, args.games, level, store=stores,
-                        seed=args.seed, experiment_id=experiment_id,
-                        log_losses=args.log_losses,
-                        progress_every=args.progress_every)
-                    print(stats.table())
-                    print()
+                try:
+                    info = describe(agent)
+                    role = (info.baseline or "candidate").upper()
+                    print(f"--- {role}  {info.fingerprint}  {info.label} ---")
+                    for level in levels:
+                        stats, _ = run_and_record(
+                            session, agent, args.games, level, store=stores,
+                            seed=args.seed, experiment_id=experiment_id,
+                            progress_every=args.progress_every)
+                        print(stats.table())
+                        print()
+                finally:
+                    agent.close()
     finally:
         for s in stores:
             s.close()

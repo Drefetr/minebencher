@@ -1,6 +1,6 @@
 # Minebencher Benchmarking, Statistics & Persistence
 
-This document describes the evaluation methodology, statistical rigor, database architecture, and regression mechanics in Minebencher.
+This document describes the evaluation methodology, statistical rigor, and database architecture in Minebencher.
 
 ---
 
@@ -19,6 +19,7 @@ Benchmarking autonomous Minesweeper agents requires controlled, identical condit
    - **Mean Progress (%)**: Percentage of safe cells uncovered before loss or stall.
    - **Mean Guesses**: Average number of moves executed with `certain=False`.
    - **Unsound Deaths**: Count of deaths occurring on moves asserted as `certain=True`.
+   - **Timeouts**: Games where Winmine's own timer reached its 999-second limit.
    - **Throughput**: Measured in games per second and moves per second.
 
 ---
@@ -46,7 +47,7 @@ Captures batch-level summaries for an agent execution:
 - `agent_id`, `version`, `description`: Human-facing display labels.
 - `privileged`, `baseline`: Integrity flags.
 - `level`: Difficulty (`beginner`, `intermediate`, `expert`).
-- `games`, `wins`, `stuck`, `stalled`, `illegal`, `superseded`, `unsound_deaths`.
+- `games`, `wins`, `stuck`, `timed_out`, `stalled`, `illegal`, `superseded`, `unsound_deaths`.
 - `mean_progress`, `mean_moves`, `mean_guesses`, `games_per_second`, `moves_per_second`.
 - `started_at`, `experiment_id`.
 
@@ -54,22 +55,9 @@ Captures batch-level summaries for an agent execution:
 Stores granular details for every game in a run:
 - `game_id`: Primary key.
 - `run_id`: Foreign key to `runs(run_id)`.
-- `won`, `opened`, `safe_cells`, `moves`, `guesses`, `seconds`.
+- `won`, `opened`, `safe_cells`, `moves`, `guesses`, `seconds`, `timed_out`.
 - `fatal_x`, `fatal_y`: Cell coordinate that ended the game.
 - `fatal_certain`: Whether the fatal move was asserted certain.
 - `position`: JSON-encoded board view and mine layout at the moment of loss.
 
 ---
-
-## 4. Loss Corpus & Deterministic Replay
-
-When benchmarking with `--log-losses <path>`, every loss serializes:
-- Board dimensions and difficulty level.
-- Exact boolean mine layout matrix.
-- Visible view state at death.
-- The fatal move coordinate and certainty flag.
-
-### Deterministic Replay
-Because `Session.set_mine_layout(mines)` writes the recorded mine layout directly into `WINMINE.EXE` process memory, `src/tools/replay.py` can re-run those exact positions:
-- Confirms the game reproduces the loss.
-- Verifies that new solver logic fixes previously failed deductions without regressions.

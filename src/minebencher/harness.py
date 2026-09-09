@@ -1,24 +1,23 @@
 """Self-play harness: run an agent over many games and score it.
 
 The harness sits on the privileged side of the boundary. It holds the process
-handle and the oracle; the agent gets only an `Observation`. Beyond win rate
-it records, for every loss, the exact position at the moment of death, so a
-future solver can be replayed against a corpus of real failures and told
-whether each one was a forced guess or a missed deduction.
+handle and the oracle; the agent gets only an `Observation`. Beyond win rate,
+it records every game and retains the terminal position for each loss.
 """
 from __future__ import annotations
 
-import json
 import statistics
 import time
-from dataclasses import asdict, dataclass, field
-from pathlib import Path
+from dataclasses import dataclass, field
 from typing import Optional
 
 from . import layout as L
 from .agent import COVERED, AgentInfo, Move, Observation, describe
+from .agent_process import AgentTimedOut
 from .reader import Snapshot
 from .session import Session, Stalled
+
+GAME_TIME_LIMIT = 999
 
 
 def observe(snap: Snapshot) -> Observation:
@@ -34,7 +33,8 @@ def observe(snap: Snapshot) -> Observation:
 @dataclass
 class GameResult:
     won: bool
-    stuck: bool               # agent returned no move while cells remained
+    stuck: bool               # agent returned no usable move
+    timed_out: bool           # Winmine timer reached its limit
     stalled: bool             # the game stopped responding
     illegal: int              # malformed moves: bad action or out of bounds
     superseded: int           # well-formed, but the cell was already resolved
@@ -63,7 +63,11 @@ def _classify(obs: Observation, mv: Move) -> str:
     cascade may resolve some of them before their turn arrives. That is not a
     mistake, so it is counted separately from genuinely malformed moves.
     """
-    if mv.action not in ("open", "flag") or not obs.in_bounds(mv.x, mv.y):
+    if not isinstance(mv, Move):
+        return "illegal"
+    if (mv.action not in ("open", "flag") or
+            type(mv.x) is not int or type(mv.y) is not int or
+            not obs.in_bounds(mv.x, mv.y)):
         return "illegal"
     if obs.at(mv.x, mv.y) != COVERED:
         return "superseded"
@@ -71,24 +75,35 @@ def _classify(obs: Observation, mv: Move) -> str:
 
 
 def play_game(session: Session, agent, level: Optional[str] = None,
-              max_moves: int = 5000, capture: bool = True) -> GameResult:
+              time_limit: int = GAME_TIME_LIMIT,
+              capture: bool = True) -> GameResult:
+    if time_limit <= 0:
+        raise ValueError("time_limit must be greater than zero")
+    set_time_limit = getattr(agent, "set_time_limit", None)
+    if set_time_limit is not None:
+        set_time_limit(time_limit)
     privileged = getattr(agent, "privileged", False)
     snap = session.reset(level)
     started = time.perf_counter()
     moves = guesses = illegal = superseded = 0
     fatal: Optional[tuple[int, int]] = None
     fatal_certain = False
-    stuck = stalled = False
+    stuck = timed_out = stalled = False
 
-    while not snap.over and moves < max_moves:
+    while not snap.over and snap.elapsed < time_limit:
         obs = observe(snap)
-        decided = agent.act(obs, snap.mines) if privileged else agent.act(obs)
+        try:
+            decided = agent.act(obs, snap.mines) if privileged else agent.act(obs)
+        except AgentTimedOut:
+            timed_out = True
+            break
         if not decided:
             stuck = True
             break
 
+        moves_before = moves
         for mv in decided:
-            if snap.over or moves >= max_moves:
+            if snap.over or snap.elapsed >= time_limit:
                 break
             verdict = _classify(observe(snap), mv)
             if verdict == "illegal":
@@ -113,10 +128,17 @@ def play_game(session: Session, agent, level: Optional[str] = None,
                 break
         if stalled:
             break
+        if moves == moves_before:
+            stuck = True
+            break
+
+    if not snap.over and snap.elapsed >= time_limit:
+        timed_out = True
 
     return GameResult(
         won=snap.status == L.Status.WON,
-        stuck=stuck, stalled=stalled, illegal=illegal, superseded=superseded,
+        stuck=stuck, timed_out=timed_out, stalled=stalled,
+        illegal=illegal, superseded=superseded,
         opened=snap.opened, safe_cells=snap.safe_cells,
         moves=moves, guesses=guesses,
         seconds=time.perf_counter() - started,
@@ -137,6 +159,7 @@ class Stats:
     games: int
     wins: int
     stuck: int
+    timed_out: int
     stalled: int
     illegal: int
     superseded: int
@@ -160,7 +183,8 @@ class Stats:
             f"  level            {self.level}",
             f"  games            {self.games}",
             f"  wins             {self.wins}  ({self.win_rate:.1%})",
-            f"  stuck / stalled  {self.stuck} / {self.stalled}",
+            f"  stuck / timeout / stalled  "
+            f"{self.stuck} / {self.timed_out} / {self.stalled}",
             f"  illegal moves    {self.illegal}"
             f"   (superseded {self.superseded})",
             f"  unsound deaths   {self.unsound_deaths}"
@@ -178,31 +202,19 @@ class Stats:
 
 
 def run_batch(session: Session, agent, games: int, level: str,
-              log_losses: Optional[Path] = None, progress_every: int = 0,
-              capture: bool = True) -> tuple[Stats, list[GameResult]]:
+              progress_every: int = 0, capture: bool = True
+              ) -> tuple[Stats, list[GameResult]]:
     info = describe(agent)
     results: list[GameResult] = []
     started = time.perf_counter()
 
-    handle = open(log_losses, "w", encoding="utf-8") if log_losses else None
-    try:
-        for i in range(games):
-            r = play_game(session, agent, level,
-                          capture=capture or bool(handle))
-            results.append(r)
-            if handle and not r.won:
-                record = asdict(r)
-                record["agent"] = info.label
-                record["fingerprint"] = info.fingerprint
-                record["level"] = level
-                handle.write(json.dumps(record) + "\n")
-            if progress_every and (i + 1) % progress_every == 0:
-                wins = sum(1 for x in results if x.won)
-                print(f"    {i + 1}/{games} games, {wins} wins "
-                      f"({wins / len(results):.1%})", flush=True)
-    finally:
-        if handle:
-            handle.close()
+    for i in range(games):
+        r = play_game(session, agent, level, capture=capture)
+        results.append(r)
+        if progress_every and (i + 1) % progress_every == 0:
+            wins = sum(1 for x in results if x.won)
+            print(f"    {i + 1}/{games} games, {wins} wins "
+                  f"({wins / len(results):.1%})", flush=True)
 
     elapsed = time.perf_counter() - started
     progress = [r.progress for r in results]
@@ -214,6 +226,7 @@ def run_batch(session: Session, agent, games: int, level: str,
         games=len(results),
         wins=sum(1 for r in results if r.won),
         stuck=sum(1 for r in results if r.stuck),
+        timed_out=sum(1 for r in results if r.timed_out),
         stalled=sum(1 for r in results if r.stalled),
         illegal=sum(r.illegal for r in results),
         superseded=sum(r.superseded for r in results),

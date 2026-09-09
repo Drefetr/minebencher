@@ -10,8 +10,8 @@ The contract
 candidate, always alongside the floor (white noise) and ceiling (oracle).
 Do not set `baseline`; that role is reserved for those two controls.
 
-Scores accumulate against a hash of the file, so renaming does not merge
-you with anyone else, and editing the file starts a new identity.
+Scores accumulate against a hash of the filename and contents, so renaming
+or editing the file starts a new identity.
 
 Implement `act(obs) -> list[Move]`. Return as many moves as you are confident
 in; the harness applies them in order and re-observes after each, skipping
@@ -30,11 +30,12 @@ the current observation every time, so nothing stops you dispatching on
 `obs.mine_total / (obs.width * obs.height)`, on how open the board is, or on
 anything else you can see.
 
-What you cannot do
-------------------
-`Observation` is the whole interface. There is no mine layout in it and no
-route back to the game process, so an agent cannot consult the oracle
-regardless of how it is written.
+Supported inputs
+----------------
+`Observation` is the whole supported interface and contains no mine layout
+or process handle. Each agent runs in its own child process, communicating
+with the harness via a JSON protocol; the subprocess boundary provides fault
+isolation but is not a security sandbox for hostile code.
 """
 from minebencher.agent import COVERED, FLAGGED, Move, Observation
 

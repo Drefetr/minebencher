@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import ctypes as C
 import subprocess
-import time
 from pathlib import Path
 from typing import Optional
 
@@ -68,21 +67,37 @@ class _ExclusiveLock:
 class Session:
     def __init__(self, level: str = "beginner", pid: Optional[int] = None,
                  launch: bool = True, timeout: float = 2.0):
-        if pid is None and not find_pids() and launch:
-            subprocess.Popen([str(EXE_PATH)], cwd=str(EXE_PATH.parent))
-            for _ in range(50):
-                if find_pids():
-                    break
-                time.sleep(0.1)
-        self.reader = MinesweeperReader(pid, writable=True)
-        self._lock = _ExclusiveLock(self.reader.pid)
-        self.window = GameWindow(sync_timeout_ms=int(timeout * 1000))
-        self._level = level
+        self._process: Optional[subprocess.Popen] = None
+        self.reader = None
+        self._lock = None
+        try:
+            if pid is None:
+                if launch:
+                    if not EXE_PATH.exists():
+                        raise FileNotFoundError(
+                            f"WINMINE.EXE not found; expected {EXE_PATH}")
+                    self._process = subprocess.Popen(
+                        [str(EXE_PATH)], cwd=str(EXE_PATH.parent))
+                    pid = self._process.pid
+                else:
+                    pids = find_pids()
+                    if not pids:
+                        raise ProcessNotFound("no running winmine.exe found")
+                    pid = pids[0]
 
-        self.suppress_highscore_dialog()
-        self.disable_marks()
-        self.window.set_level(self.reader, level)
-        self.window.calibrate(self.reader)
+            self.reader = MinesweeperReader(pid, writable=True)
+            self._lock = _ExclusiveLock(self.reader.pid)
+            self.window = GameWindow(
+                pid=self.reader.pid, sync_timeout_ms=int(timeout * 1000))
+            self._level = level
+
+            self.suppress_highscore_dialog()
+            self.disable_marks()
+            self.window.set_level(self.reader, level)
+            self.window.calibrate(self.reader)
+        except Exception:
+            self.close()
+            raise
 
     # --- setup -----------------------------------------------------------
     def suppress_highscore_dialog(self) -> None:
@@ -101,8 +116,21 @@ class Session:
             self.reader.write_u32(L.ADDR_MARKS, 0)
 
     def close(self) -> None:
-        self.reader.close()
-        self._lock.release()
+        if self.reader is not None:
+            self.reader.close()
+            self.reader = None
+        if self._lock is not None:
+            self._lock.release()
+            self._lock = None
+        if self._process is not None:
+            if self._process.poll() is None:
+                self._process.terminate()
+                try:
+                    self._process.wait(timeout=2)
+                except subprocess.TimeoutExpired:
+                    self._process.kill()
+                    self._process.wait()
+            self._process = None
 
     def __enter__(self):
         return self
@@ -129,38 +157,4 @@ class Session:
 
     def flag(self, x: int, y: int) -> Snapshot:
         self.window.right_click(x, y)
-        return self.state()
-
-    # --- position injection ----------------------------------------------
-    def set_mine_layout(self, mines: list[list[bool]]) -> Snapshot:
-        """Overwrite the mine bits on a freshly started game.
-
-        This is the one case where writing memory is clearly better than
-        clicking: it lets us reproduce a specific board exactly, which turns
-        the logged loss corpus into a deterministic regression suite. It is
-        safe because it only edits *state* and leaves every state transition
-        to the game's own code -- the counters stay consistent so long as the
-        mine count is unchanged, which is checked below.
-
-        Note that winmine still relocates a mine if the very first click
-        lands on one, so a replay is faithful only while the recorded opening
-        move is reproduced too.
-        """
-        snap = self.state()
-        if snap.opened:
-            raise RuntimeError("set_mine_layout requires a fresh game")
-        want = sum(row.count(True) for row in mines)
-        if want != snap.mine_total:
-            raise ValueError(f"layout has {want} mines but the current game "
-                             f"expects {snap.mine_total}")
-        if len(mines) != snap.height or len(mines[0]) != snap.width:
-            raise ValueError("layout dimensions do not match the board")
-
-        board = bytearray(snap.raw)
-        for y in range(snap.height):
-            for x in range(snap.width):
-                i = (y + 1) * L.ROW_STRIDE + (x + 1)
-                board[i] = (board[i] | L.MINE_BIT) if mines[y][x] \
-                    else (board[i] & ~L.MINE_BIT)
-        self.reader.write_bytes(L.ADDR_BOARD, bytes(board))
         return self.state()

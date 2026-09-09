@@ -1,27 +1,24 @@
 """Discovery and loading of agents from the `agents/` directory.
 
-The split mirrors the trust boundary: `src/minebencher/` is the privileged
-harness that holds the process handle and the oracle, `agents/` is
-contributor space where nothing has either.
+The split mirrors the API boundary: `src/minebencher/` is the privileged
+harness that holds the process handle and the oracle, while ordinary agent
+calls receive only an `Observation`. Agent modules remain trusted code.
 
 Drop a `.py` file (or a package) into `agents/` and it is a candidate.
-Discovery does not consult filenames or display names: it loads each
-module, finds an `act` method, and identifies the agent by hashing its
-source. Labels (`agent_id`, `version`) are optional and cosmetic.
+Discovery probes each module in a short-lived child process, finds its `act`
+method, and identifies the agent by hashing its source. Labels (`agent_id`,
+`version`) are optional and cosmetic. Agent code is never imported here.
 
 Files and directories whose names start with `.` or `_` are skipped, so
 templates and notes can live beside real agents without being run.
 """
 from __future__ import annotations
 
-import importlib.util
-import inspect
-import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
-from .agent import describe
+from .agent_process import AgentProcess, probe_agent
 
 _ROOT = Path(__file__).resolve().parent.parent.parent if Path(__file__).resolve().parent.parent.name == "src" else Path(__file__).resolve().parent.parent
 AGENTS_DIR = _ROOT / "agents"
@@ -29,7 +26,6 @@ AGENTS_DIR = _ROOT / "agents"
 
 @dataclass(frozen=True)
 class Registration:
-    cls: type
     source: Path
     fingerprint: str
     agent_id: str
@@ -62,42 +58,9 @@ def _candidate_modules(directory: Path) -> list[Path]:
     return found
 
 
-def _load_module(path: Path):
-    stem = path.parent.name if path.name == "__init__.py" else path.stem
-    name = f"_mb_agents.{stem}_{id(path)}"
-    spec = importlib.util.spec_from_file_location(name, path)
-    if spec is None or spec.loader is None:
-        raise ImportError(f"cannot load {path}")
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[name] = module
-    spec.loader.exec_module(module)
-    return name, module
-
-
-def _agent_classes(module_name: str, module) -> list[type]:
-    found = []
-    for obj in vars(module).values():
-        if not inspect.isclass(obj) or obj.__module__ != module_name:
-            continue
-        if not callable(getattr(obj, "act", None)):
-            continue
-        found.append(obj)
-    return found
-
-
-def _construct(cls: type, seed: Optional[int] = None):
-    try:
-        params = inspect.signature(cls).parameters
-    except (TypeError, ValueError):
-        params = {}
-    if "seed" in params:
-        return cls(seed=seed)
-    return cls()
-
-
 def instantiate(reg: Registration, seed: Optional[int] = None):
-    """Construct an agent, passing `seed` only if it accepts one."""
-    return _construct(reg.cls, seed)
+    """Start an isolated agent worker, passing its constructor `seed`."""
+    return AgentProcess(reg.source, seed, reg.fingerprint)
 
 
 def discover(directory: Path = AGENTS_DIR) -> Discovery:
@@ -110,25 +73,7 @@ def discover(directory: Path = AGENTS_DIR) -> Discovery:
 
     for path in _candidate_modules(directory):
         try:
-            name, module = _load_module(path)
-        except Exception as exc:                      # noqa: BLE001
-            errors[str(path)] = f"{type(exc).__name__}: {exc}"
-            continue
-
-        classes = _agent_classes(name, module)
-        if not classes:
-            errors[str(path)] = "no class with an act() method"
-            continue
-        if len(classes) > 1:
-            names = ", ".join(c.__name__ for c in classes)
-            errors[str(path)] = (
-                f"multiple act() classes ({names}); one agent per file, "
-                "because identity is the file hash")
-            continue
-
-        cls = classes[0]
-        try:
-            info = describe(_construct(cls))
+            info = probe_agent(path)
         except Exception as exc:                      # noqa: BLE001
             errors[str(path)] = f"{type(exc).__name__}: {exc}"
             continue
@@ -140,7 +85,7 @@ def discover(directory: Path = AGENTS_DIR) -> Discovery:
             continue
         by_hash[info.fingerprint] = path
         agents.append(Registration(
-            cls=cls, source=path, fingerprint=info.fingerprint,
+            source=path, fingerprint=info.fingerprint,
             agent_id=info.agent_id, version=info.version,
             privileged=info.privileged, description=info.description,
             baseline=info.baseline,

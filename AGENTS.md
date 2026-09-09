@@ -2,7 +2,7 @@
 
 A quickstart guide for writing and benchmarking autonomous Minesweeper solvers in Minebencher.
 
-For the exhaustive API reference and execution semantics, see [docs/protocol.md](file:///c:/Users/Drefetr/Downloads/Minesweeper-Windows-XP/docs/protocol.md).
+For the exhaustive API reference and execution semantics, see [docs/protocol.md](docs/protocol.md).
 
 ---
 
@@ -40,7 +40,7 @@ cp agents/_template.py agents/my_solver.py
 ### Step 2: Implement the Agent Logic
 Inspect the incoming `Observation` and return a list of planned `Move`s.
 
-For a concrete, working example of how to implement the agent protocol, inspect the **Random Agent Walkthrough** in [docs/protocol.md](file:///c:/Users/Drefetr/Downloads/Minesweeper-Windows-XP/docs/protocol.md#7-canonical-reference-implementation-random-agent) (referencing [agents/random.py](file:///c:/Users/Drefetr/Downloads/Minesweeper-Windows-XP/agents/random.py)).
+For a concrete, working example of how to implement the agent protocol, inspect the **Random Agent Walkthrough** in [docs/protocol.md](docs/protocol.md#7-canonical-reference-implementation-random-agent) (referencing [agents/random.py](agents/random.py)).
 
 ### Step 3: Verify Discovery
 
@@ -61,13 +61,14 @@ python src/tools/report.py
 
 - **Soundness & Guesses**: Set `certain=True` only when a move is mathematically guaranteed. If an agent dies on a move marked `certain=True`, the harness records an **Unsound Death** (a solver bug). When guessing, set `certain=False`.
 - **Resignation**: Returning `[]` when covered cells remain records the game as **`stuck`** rather than a loss.
-- **Content-Addressed Identity**: Solvers are identified in `results.db` by the SHA-256 fingerprint of their source file. Editing any line of code produces a fresh identity, while renaming preserves history.
+- **Time Limit**: Games stop when Winmine's timer reaches 999 seconds and are recorded as **`timed out`**.
+- **Source Identity**: Solvers are identified in `results.db` by a SHA-256 fingerprint of their source filename and contents. Editing or renaming the file produces a fresh identity.
 - **Baselines**: Leave `baseline = None` (the default). The roles `floor` (`agents/random.py`) and `ceiling` (`agents/oracle.py`) are reserved control baselines.
 
 ---
 
 ## 4. Deep Dive Documentation
 
-- **[docs/protocol.md](file:///c:/Users/Drefetr/Downloads/Minesweeper-Windows-XP/docs/protocol.md)**: Exhaustive method documentation for `Observation`, `Move`, and cell constants.
-- **[docs/benchmarking.md](file:///c:/Users/Drefetr/Downloads/Minesweeper-Windows-XP/docs/benchmarking.md)**: Statistical evaluation, Wilson score 95% CIs, and loss replay.
-- **[docs/tools.md](file:///c:/Users/Drefetr/Downloads/Minesweeper-Windows-XP/docs/tools.md)**: Full options reference for `bench.py`, `report.py`, `replay.py`, etc.
+- **[docs/protocol.md](docs/protocol.md)**: Exhaustive method documentation for `Observation`, `Move`, and cell constants.
+- **[docs/benchmarking.md](docs/benchmarking.md)**: Statistical evaluation, Wilson score 95% CIs, and result persistence.
+- **[docs/tools.md](docs/tools.md)**: Full options reference for the command-line tools.

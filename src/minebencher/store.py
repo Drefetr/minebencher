@@ -2,12 +2,12 @@
 
 Every batch is appended as a `run`, with its individual `games`, so scores
 accumulate across time. Identity is the source fingerprint: name and version
-are labels recorded alongside for humans, never keys. Editing an agent
-produces a new hash and therefore a new player; renaming it does not merge
-anyone else's games into it.
+are labels recorded alongside for humans, never keys. The source filename and
+contents both contribute to the hash, so editing or renaming an agent creates
+a new player.
 
-Losing positions are kept alongside their game so the corpus stays joined to
-the result that produced it.
+Every game is recorded. Terminal board data for losses is kept alongside the
+result that produced it.
 """
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 # Columns added after the first release. Applied on open so an existing
 # results.db keeps its history instead of being discarded for a new metric.
@@ -26,9 +26,11 @@ MIGRATIONS = {
     "runs": [("superseded", "INTEGER NOT NULL DEFAULT 0"),
              ("unsound_deaths", "INTEGER NOT NULL DEFAULT 0"),
              ("experiment_id", "TEXT"),
-             ("baseline", "TEXT")],
+             ("baseline", "TEXT"),
+             ("timed_out", "INTEGER NOT NULL DEFAULT 0")],
     "games": [("superseded", "INTEGER NOT NULL DEFAULT 0"),
-              ("fatal_certain", "INTEGER NOT NULL DEFAULT 0")],
+              ("fatal_certain", "INTEGER NOT NULL DEFAULT 0"),
+              ("timed_out", "INTEGER NOT NULL DEFAULT 0")],
 }
 
 SCHEMA = """
@@ -44,6 +46,7 @@ CREATE TABLE IF NOT EXISTS runs (
     games            INTEGER NOT NULL,
     wins             INTEGER NOT NULL,
     stuck            INTEGER NOT NULL,
+    timed_out        INTEGER NOT NULL DEFAULT 0,
     stalled          INTEGER NOT NULL,
     illegal          INTEGER NOT NULL,
     mean_progress    REAL,
@@ -67,6 +70,7 @@ CREATE TABLE IF NOT EXISTS games (
     guesses     INTEGER NOT NULL,
     seconds     REAL    NOT NULL,
     stuck       INTEGER NOT NULL,
+    timed_out   INTEGER NOT NULL DEFAULT 0,
     stalled     INTEGER NOT NULL,
     illegal     INTEGER NOT NULL,
     fatal_x     INTEGER,
@@ -137,15 +141,15 @@ class ResultStore:
         cur = self.conn.cursor()
         cur.execute(
             """INSERT INTO runs (agent_id, version, fingerprint, privileged,
-                   description, level, seed, games, wins, stuck, stalled,
+                   description, level, seed, games, wins, stuck, timed_out, stalled,
                    illegal, superseded, unsound_deaths, mean_progress,
                    mean_moves, mean_guesses, games_per_second,
                    moves_per_second, total_seconds, started_at,
                    schema_version, experiment_id, baseline)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (info.agent_id, info.version, info.fingerprint,
              int(info.privileged), info.description, stats.level, seed,
-             stats.games, stats.wins, stats.stuck, stats.stalled,
+             stats.games, stats.wins, stats.stuck, stats.timed_out, stats.stalled,
              stats.illegal, stats.superseded, stats.unsound_deaths,
              stats.mean_progress, stats.mean_moves,
              stats.mean_guesses, stats.games_per_second,
@@ -162,13 +166,13 @@ class ResultStore:
             fx, fy = r.fatal_move if r.fatal_move else (None, None)
             rows.append((run_id, i, int(r.won), r.opened, r.safe_cells,
                          r.moves, r.guesses, r.seconds, int(r.stuck),
-                         int(r.stalled), r.illegal, r.superseded,
+                         int(r.timed_out), int(r.stalled), r.illegal, r.superseded,
                          fx, fy, int(r.fatal_certain), position))
         cur.executemany(
             """INSERT INTO games (run_id, idx, won, opened, safe_cells, moves,
-                   guesses, seconds, stuck, stalled, illegal, superseded,
+                   guesses, seconds, stuck, timed_out, stalled, illegal, superseded,
                    fatal_x, fatal_y, fatal_certain, position)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""", rows)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""", rows)
         self.conn.commit()
         return run_id
 
@@ -206,6 +210,7 @@ class ResultStore:
                    SUM(r.wins)                    AS wins,
                    SUM(r.illegal)                 AS illegal,
                    SUM(r.stuck)                   AS stuck,
+                   SUM(r.timed_out)               AS timed_out,
                    SUM(r.stalled)                 AS stalled,
                    SUM(r.unsound_deaths)          AS unsound_deaths,
                    SUM(r.mean_progress * r.games) / SUM(r.games)

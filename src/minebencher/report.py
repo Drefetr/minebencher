@@ -93,10 +93,12 @@ def format_leaderboard(
                     f"on moves it called certain -- its deduction is buggy",
                     file=out,
                 )
-            if e["illegal"] or e["stuck"] or e["stalled"]:
+            if (e["illegal"] or e["stuck"] or e["timed_out"] or
+                    e["stalled"]):
                 print(
                     f"      note: {who} had {e['illegal']} illegal moves, "
-                    f"{e['stuck']} stuck, {e['stalled']} stalled",
+                    f"{e['stuck']} stuck, {e['timed_out']} timed out, "
+                    f"{e['stalled']} stalled",
                     file=out,
                 )
 

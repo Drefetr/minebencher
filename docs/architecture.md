@@ -100,5 +100,38 @@ The physical grid origin in screen client pixels is derived at runtime via `cali
 
 - **Dialog Suppression**: Winning a game faster than the current best time triggers a modal "New High Score" dialog that blocks the message pump. Minebencher zeroes the high score entries at `0x010056CC`; since elapsed seconds cannot be negative, the dialog never triggers.
 - **Marks Disabled**: Clears `0x010056BC` so right-clicks toggle cleanly between covered and flagged without cycling through question marks.
+- **Owned Process**: A default session launches and later terminates its own `WINMINE.EXE` process instead of attaching to an unrelated open game.
+- **PID-Bound Input**: Window discovery verifies the owning process ID, so clicks and memory snapshots always target the same Winmine instance.
 - **Process Mutex**: Each session acquires a named Windows mutex `Local\winmine-harness-{pid}`. If two scripts attempt to drive the same PID simultaneously, the second safely errors out.
-- **Deterministic Board Injection**: `session.set_mine_layout(mines)` writes mine bits directly into memory on a freshly initialized board. This enables exact replay of failure cases from `losses.jsonl` as deterministic regression tests.
+
+---
+
+## 6. Agent Subprocess Isolation
+
+Agent code is never imported into the harness process. Each agent runs in a dedicated child Python process (`minebencher.worker`), communicating via a line-delimited JSON protocol over stdin/stdout.
+
+### Worker Lifecycle
+
+```
+Harness (parent)                         Worker (child)
+    |                                        |
+    |--- subprocess.Popen ------------------>|
+    |                                        |-- importlib loads agent module
+    |<-- {"type":"ready", ...} --------------|  (print() redirected to stderr)
+    |                                        |
+    |--- {"type":"act", "observation":{...}}->|
+    |                                        |-- agent.act(obs)
+    |<-- {"type":"moves", "moves":[...]} ----|
+    |        ... (repeats per turn) ...      |
+    |                                        |
+    |--- {"type":"close"} ------------------>|
+    |                                        |-- exit(0)
+```
+
+### Fault Isolation
+- A crashing agent sends `{"type":"error", ...}` and exits; the harness logs the failure without itself dying.
+- A hanging agent is killed after the remaining game-time deadline (999 − elapsed seconds) plus a startup grace period of 10 seconds.
+- Agent `print()` calls are redirected to stderr inside the worker so they cannot corrupt the JSON protocol stream.
+
+### Discovery
+Registry discovery (`probe_agent`) spawns a short-lived worker per candidate file, reads the `ready` message for metadata (agent_id, version, fingerprint, baseline), and immediately closes the process. No agent code is ever evaluated in the parent.

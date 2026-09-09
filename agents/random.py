@@ -1,4 +1,6 @@
 """White-noise baseline: the floor every real agent must clear."""
+from __future__ import annotations
+
 import random
 
 from minebencher.agent import Move, Observation

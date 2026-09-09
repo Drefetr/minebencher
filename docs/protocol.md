@@ -4,9 +4,9 @@ This document is the authoritative reference for the `minebencher.agent` API, da
 
 ---
 
-## 1. The Trust Boundary
+## 1. The Agent API Boundary
 
-Minebencher enforces an epistemic trust boundary between the privileged runner and candidate solvers:
+Minebencher exposes an epistemic API boundary between the privileged runner and candidate solvers:
 
 ```
 +-------------------------------------------------------------+
@@ -16,17 +16,18 @@ Minebencher enforces an epistemic trust boundary between the privileged runner a
 |   - Enforces game rules & detects deduction soundness bugs  |
 +------------------------------+------------------------------+
                                |
-                   Observation | (immutable, mines stripped)
+           JSON-over-stdio IPC | (Observation serialised,
+                               |  mines stripped)
                                v
 +-------------------------------------------------------------+
-|                 Contributor Space (agents/)                 |
-|   - Autonomous solvers implementing the Agent protocol      |
+|              Isolated Agent Process (agents/)               |
+|   - Each agent runs in a dedicated child Python process     |
 |   - Receives only player-visible board state                |
 |   - Returns Move(action, x, y, certain)                     |
 +-------------------------------------------------------------+
 ```
 
-Solvers receive an immutable `Observation` object. All mine layout bits and process handles are completely stripped. Honesty is guaranteed structurally by type design.
+Each agent runs in a dedicated child process (`minebencher.worker`), communicating with the harness via a JSON-over-stdio protocol. The agent receives serialised `Observation` objects with mine layout bits stripped. This subprocess boundary provides fault isolation — a crashing or hanging agent cannot take down the harness — but is not a security sandbox for hostile submissions; agent code is still trusted Python.
 
 ---
 
@@ -122,7 +123,7 @@ An immutable snapshot representing the board state:
 | `height` | `int` | Board height in rows ($H$). |
 | `mine_total` | `int` | Total mines placed on the board. |
 | `mines_left` | `int` | Displayed counter (`mine_total - flags_placed`). |
-| `elapsed` | `int` | Seconds on the timer. |
+| `elapsed` | `int` | Seconds on Winmine's timer, capped at 999. |
 | `opened` | `int` | Count of cells uncovered so far. |
 | `safe_cells` | `int` | Win target ($W \times H - \text{mine_total}$). |
 | `view` | `tuple[tuple[int, ...], ...]` | 2D board state accessed as `obs.view[y][x]`. |
@@ -141,6 +142,14 @@ An immutable snapshot representing the board state:
 
 ## 4. Execution Semantics & Game Rules
 
+### Subprocess Isolation
+Agents are never imported into the harness process. The registry discovers agents by spawning a short-lived child process (`minebencher.worker`) for each candidate file; at benchmark time, each agent gets its own long-lived worker process. Communication uses a line-delimited JSON protocol over stdin/stdout:
+
+1. **Startup**: The worker loads the agent module, sends a `{"type": "ready", ...}` message with identity metadata, and waits.
+2. **Per-turn**: The harness sends `{"type": "act", "observation": {...}}`. The worker calls `agent.act()`, encodes the returned moves, and replies with `{"type": "moves", "moves": [...]}`. Agent `print()` calls are redirected to stderr so they cannot corrupt the protocol stream.
+3. **Shutdown**: The harness sends `{"type": "close"}`; the worker exits cleanly. If the agent hangs, the harness terminates the process after a timeout.
+4. **Timeouts**: Each `act` call is given a deadline equal to the remaining game time (999 − elapsed seconds). Exceeding it raises `AgentTimedOut` on the harness side.
+
 ### Move Batching & Cascades
 An agent may return a batch of multiple moves from `act()`. The harness processes them in order:
 1. Validates move format and bounds.
@@ -149,6 +158,13 @@ An agent may return a batch of multiple moves from `act()`. The harness processe
 
 ### Resignation
 If an agent cannot find any safe move and covered cells remain, returning an empty list `[]` signals resignation. The game is scored as **`stuck`** rather than a loss.
+
+If a non-empty batch contains no move the harness can apply, the game is also
+`stuck`; retrying against the unchanged observation could never advance it.
+
+### Time Limit
+The harness stops a game when Winmine's own timer reaches 999 seconds and
+records it separately as **`timed out`**.
 
 ### First-Click Safety
 `WINMINE.EXE` relocates any mine landed on by the first click to the top-left available empty cell. Thus, the opening move can never trigger an explosion.
@@ -160,7 +176,7 @@ If an agent cannot find any safe move and covered cells remain, returning an emp
 Solvers are identified by **SHA-256 fingerprint** of their source files:
 - `agent_id` and `version` are purely display labels.
 - Modifying a single character of code changes the hash and creates a fresh player in `results.db`.
-- Renaming an agent file or class preserves its hash and keeps historical stats joined.
+- The source filename contributes to the hash, so renaming an agent file creates a new identity. Renaming only its class changes the hash because it changes the source contents.
 - Package agents (a directory with `__init__.py`) are hashed across all `.py` files in that package.
 
 ---
@@ -180,7 +196,7 @@ Solvers setting `privileged = True` receive the mine boolean matrix `mines: list
 
 ## 7. Canonical Reference Implementation: Random Agent
 
-The white-noise baseline [agents/random.py](file:///c:/Users/Drefetr/Downloads/Minesweeper-Windows-XP/agents/random.py) demonstrates the complete agent contract in minimal code:
+The white-noise baseline [agents/random.py](../agents/random.py) demonstrates the complete agent contract in minimal code:
 
 ```python
 """White-noise baseline: the floor every real agent must clear."""

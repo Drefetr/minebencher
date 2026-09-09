@@ -9,7 +9,6 @@ __pycache__/
 *.db-wal
 *.db-shm
 results.db
-losses.jsonl
 
 # Candidate agents: track only baseline controls and starter template
 agents/*

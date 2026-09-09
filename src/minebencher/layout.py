@@ -33,7 +33,7 @@ ADDR_MINE_TOTAL = 0x01005330  # dword: total mines this game
 ADDR_WIDTH = 0x01005334      # dword: columns (x, the fast axis)
 ADDR_HEIGHT = 0x01005338     # dword: rows (y, the 32-byte-strided axis)
 ADDR_BOARD = 0x01005340      # byte[27][32], 1-indexed, 0x10 border
-ADDR_TIME = 0x0100579C       # dword: elapsed seconds
+ADDR_TIME = 0x0100579C       # dword: elapsed seconds, capped at 999
 ADDR_SAFE_CELLS = 0x010057A0  # dword: W*H - mines (the win target)
 ADDR_OPENED = 0x010057A4     # dword: cells uncovered so far
 

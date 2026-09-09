@@ -10,12 +10,12 @@ Terminology, which the code follows strictly:
           position; that is invisible to the harness by design, and it is
           why the harness never names or scores a policy.
 
-An agent receives an `Observation` and returns `Move`s. That is the entire
+An agent receives an `Observation` and returns `Move`s. That is the supported
 interface. An Observation is an immutable value object built from a snapshot
-with the mine layout stripped out, so an agent cannot consult the oracle
-however it is written: there is no process handle, no reader, no `.mines`
-field, and nothing to walk back to them from. Honesty is a property of the
-type, not a rule we ask agents to follow.
+with the mine layout stripped out: it exposes no process handle, reader, or
+`.mines` field. Each agent runs in a dedicated child process
+(`minebencher.worker`), communicating via JSON-over-stdio; agent code is
+never imported into the harness process.
 
 The harness keeps the oracle on its side of the boundary and uses it purely
 for scoring. `PrivilegedAgent` is the single, explicit exception, and any run
@@ -134,7 +134,8 @@ def _fingerprint(agent) -> str:
 
     This is the agent's identity in the results store. Name and version are
     labels for humans; two files that share a name but differ in content are
-    two players, and renaming a file does not merge anyone's games.
+    two players. The filename is deliberately part of the digest, so renaming
+    a source file also creates a new identity.
 
     Hashing only the class body (inspect.getsource on the type) is too weak:
     module-level helpers, imports and sibling files in a package all affect
@@ -166,7 +167,7 @@ def describe(agent) -> AgentInfo:
     `version` are recorded so reports can show a name; they are never the
     key that joins games together.
     """
-    fingerprint = _fingerprint(agent)
+    fingerprint = getattr(agent, "fingerprint", None) or _fingerprint(agent)
     privileged = bool(getattr(agent, "privileged", False))
     baseline = getattr(agent, "baseline", None)
     if baseline not in ("floor", "ceiling", None):
@@ -178,8 +179,7 @@ def describe(agent) -> AgentInfo:
         version=str(getattr(agent, "version", "0")),
         fingerprint=fingerprint,
         privileged=privileged,
-        description=(inspect.getdoc(type(agent)) or "").split("\n")[0],
+        description=(getattr(agent, "description", None) or
+                     (inspect.getdoc(type(agent)) or "").split("\n")[0]),
         baseline=baseline,
     )
-
-

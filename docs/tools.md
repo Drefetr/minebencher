@@ -14,14 +14,13 @@ python src/tools/bench.py [options]
 ```
 
 #### Key Arguments
-- `--games <N>`: Number of games per level (default: `100`).
+- `--games <N>`: Positive number of games per level (default: `100`).
 - `--level <LVL>`: Difficulty level: `beginner`, `intermediate`, or `expert` (default: `beginner`).
 - `--all-levels`: Run across all three standard difficulty levels sequentially.
 - `--only <HASH_OR_NAME>`: Filter candidate solvers by SHA-256 prefix or `agent_id` (baselines still run).
 - `--seed <S>`: PRNG seed passed to agents supporting seeding (default: `0`).
 - `--db <PATH>`: Cumulative database path (default: `benchmarks/results_cumulative.db`).
 - `--no-record`: Run benchmark without persisting results to SQLite.
-- `--log-losses <PATH>`: Output JSONL log of loss positions for regression replay.
 - `--progress-every <N>`: Print progress update every $N$ games.
 
 Outputs are archived to:
@@ -59,14 +58,7 @@ python src/tools/agents.py [--dir <PATH>]
 
 ---
 
-## 2. Regression & Diagnostics
-
-### `src/tools/replay.py`
-Injects recorded loss positions into `WINMINE.EXE` memory to test determinism:
-
-```bash
-python src/tools/replay.py <loss_corpus.jsonl> [--limit <N>]
-```
+## 2. Diagnostics
 
 ### `src/tools/verify.py`
 Validates memory layout and internal consistency checks against an active game:

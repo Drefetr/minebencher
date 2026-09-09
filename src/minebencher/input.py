@@ -49,12 +49,19 @@ LEVELS = {"beginner": ID_BEGINNER, "intermediate": ID_INTERMEDIATE,
 CELL = 16
 ORIGIN_X, ORIGIN_Y = 12, 55
 
-user32.FindWindowW.restype = W.HWND
+user32.EnumWindows.restype = W.BOOL
+user32.GetWindowThreadProcessId.restype = W.DWORD
 user32.PostMessageW.argtypes = [W.HWND, C.c_uint, W.WPARAM, W.LPARAM]
 user32.SendMessageTimeoutW.argtypes = [
     W.HWND, C.c_uint, W.WPARAM, W.LPARAM, C.c_uint, C.c_uint,
     C.POINTER(C.c_size_t),
 ]
+
+WNDENUMPROC = C.WINFUNCTYPE(W.BOOL, W.HWND, W.LPARAM)
+user32.EnumWindows.argtypes = [WNDENUMPROC, W.LPARAM]
+user32.GetWindowThreadProcessId.argtypes = [W.HWND, C.POINTER(W.DWORD)]
+user32.GetClassNameW.argtypes = [W.HWND, W.LPWSTR, C.c_int]
+user32.GetWindowTextW.argtypes = [W.HWND, W.LPWSTR, C.c_int]
 
 
 class WindowBusy(RuntimeError):
@@ -69,17 +76,43 @@ def _lparam(px: int, py: int) -> int:
     return ((py & 0xFFFF) << 16) | (px & 0xFFFF)
 
 
+def _find_window_for_pid(pid: int) -> Optional[int]:
+    """Find the Minesweeper top-level window owned by exactly `pid`."""
+    found: list[int] = []
+
+    @WNDENUMPROC
+    def visit(hwnd, _lparam):
+        owner = W.DWORD()
+        user32.GetWindowThreadProcessId(hwnd, C.byref(owner))
+        if owner.value != pid:
+            return True
+
+        class_name = C.create_unicode_buffer(256)
+        title = C.create_unicode_buffer(256)
+        user32.GetClassNameW(hwnd, class_name, len(class_name))
+        user32.GetWindowTextW(hwnd, title, len(title))
+        if class_name.value == "Minesweeper" or title.value == "Minesweeper":
+            found.append(hwnd)
+            return False
+        return True
+
+    user32.EnumWindows(visit, 0)
+    return found[0] if found else None
+
+
 class GameWindow:
-    def __init__(self, hwnd: Optional[int] = None, sync_timeout_ms: int = 3000):
+    def __init__(self, hwnd: Optional[int] = None, pid: Optional[int] = None,
+                 sync_timeout_ms: int = 3000):
         if hwnd is None:
+            if pid is None:
+                raise ValueError("GameWindow requires a target pid or hwnd")
             for _ in range(50):
-                hwnd = user32.FindWindowW("Minesweeper", None) or \
-                       user32.FindWindowW(None, "Minesweeper")
+                hwnd = _find_window_for_pid(pid)
                 if hwnd:
                     break
                 time.sleep(0.1)
         if not hwnd:
-            raise RuntimeError("Minesweeper window not found")
+            raise RuntimeError(f"Minesweeper window for pid {pid} not found")
         self.hwnd = hwnd
         self.origin = (ORIGIN_X, ORIGIN_Y)
         self.cell = CELL

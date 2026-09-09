@@ -21,17 +21,19 @@ A high-throughput, memory-synchronized self-play benchmarking harness and cumula
 |                                                                         |
 |   - Synchronous message-loop dispatch via SendMessageTimeoutW          |
 |   - Single-pass atomic .data snapshotting & honest observation masking  |
-|   - Single-pass atomic .data snapshotting & honest observation masking  |
+|   - Dedicated Winmine process lifecycle and PID-bound window control    |
 |   - Durable results persistence in SQLite (benchmarks/results_cumulative.db) |
 |   - Automatic per-run and cumulative benchmarks in benchmarks/          |
 +------------------------------------+------------------------------------+
                                      |
-                         Observation | (immutable, mines stripped)
+                    JSON-over-stdio  | (Observation serialised,
+                              IPC    |  mines stripped)
                                      v
 +-------------------------------------------------------------------------+
-|                         Contributor Space                               |
-|                             (agents/)                                   |
+|                  Isolated Agent Processes                               |
+|                      (agents/ → minebencher.worker)                    |
 |                                                                         |
+|   - Each agent runs in a dedicated child Python process                |
 |   - Autonomous deductive solvers (single-point, subsets, CSP)           |
 |   - Mandatory baselines (agents/random.py floor, agents/oracle.py ceil) |
 |   - Content-addressed SHA-256 fingerprint identity                      |
@@ -72,6 +74,8 @@ A high-throughput, memory-synchronized self-play benchmarking harness and cumula
 │
 └── src/
     ├── minebencher/        # Privileged harness, reader, input driver & store
+    │   ├── agent_process.py    # Parent-side proxy; spawns & manages agent workers
+    │   └── worker.py           # Child-process endpoint for isolated agent execution
     └── tools/              # CLI tools (bench.py, report.py, agents.py, etc.)
 ```
 
@@ -109,11 +113,11 @@ python src/tools/report.py
 
 ## Documentation Index
 
-- **[AGENTS.md](file:///c:/Users/Drefetr/Downloads/Minesweeper-Windows-XP/AGENTS.md)**: Solver authoring quickstart and starter template.
-- **[docs/protocol.md](file:///c:/Users/Drefetr/Downloads/Minesweeper-Windows-XP/docs/protocol.md)**: Full Agent protocol, `Observation` methods, `Move` structure, and soundness guarantees.
-- **[docs/architecture.md](file:///c:/Users/Drefetr/Downloads/Minesweeper-Windows-XP/docs/architecture.md)**: Reverse-engineered memory layout, cell bitmasks, and Win32 input synchronization.
-- **[docs/benchmarking.md](file:///c:/Users/Drefetr/Downloads/Minesweeper-Windows-XP/docs/benchmarking.md)**: Statistical evaluation, Wilson score intervals, SQLite schema, and loss replay.
-- **[docs/tools.md](file:///c:/Users/Drefetr/Downloads/Minesweeper-Windows-XP/docs/tools.md)**: Complete command-line reference for all utilities in `src/tools/`.
+- **[AGENTS.md](AGENTS.md)**: Solver authoring quickstart and starter template.
+- **[docs/protocol.md](docs/protocol.md)**: Full Agent protocol, `Observation` methods, `Move` structure, and soundness guarantees.
+- **[docs/architecture.md](docs/architecture.md)**: Reverse-engineered memory layout, cell bitmasks, and Win32 input synchronization.
+- **[docs/benchmarking.md](docs/benchmarking.md)**: Statistical evaluation, Wilson score intervals, and database schema.
+- **[docs/tools.md](docs/tools.md)**: Complete command-line reference for all utilities in `src/tools/`.
 
 ---
 
@@ -133,5 +137,5 @@ python src/tools/report.py
 
 ## License
 
-This project is released under the [MIT License](file:///c:/Users/Drefetr/Downloads/Minesweeper-Windows-XP/LICENSE).
+This project is released under the [MIT License](LICENSE).
 Copyright (c) 2026 David Carey.
