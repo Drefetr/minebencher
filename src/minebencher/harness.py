@@ -9,11 +9,12 @@ from __future__ import annotations
 import statistics
 import time
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Callable, Optional
 
 from . import layout as L
 from .agent import COVERED, AgentInfo, Move, Observation, describe
 from .agent_process import AgentTimedOut
+from .progress import BatchProgress
 from .reader import Snapshot
 from .session import Session, Stalled
 
@@ -76,7 +77,9 @@ def _classify(obs: Observation, mv: Move) -> str:
 
 def play_game(session: Session, agent, level: Optional[str] = None,
               time_limit: int = GAME_TIME_LIMIT,
-              capture: bool = True) -> GameResult:
+              capture: bool = True,
+              on_progress: Optional[Callable[[int, Snapshot, int], None]] = None
+              ) -> GameResult:
     if time_limit <= 0:
         raise ValueError("time_limit must be greater than zero")
     set_time_limit = getattr(agent, "set_time_limit", None)
@@ -89,6 +92,8 @@ def play_game(session: Session, agent, level: Optional[str] = None,
     fatal: Optional[tuple[int, int]] = None
     fatal_certain = False
     stuck = timed_out = stalled = False
+    if on_progress is not None:
+        on_progress(0, snap, 0)
 
     while not snap.over and snap.elapsed < time_limit:
         obs = observe(snap)
@@ -126,6 +131,8 @@ def play_game(session: Session, agent, level: Optional[str] = None,
             except Stalled:
                 stalled = True
                 break
+            if on_progress is not None:
+                on_progress(moves, snap, guesses)
         if stalled:
             break
         if moves == moves_before:
@@ -172,6 +179,7 @@ class Stats:
     games_per_second: float
     moves_per_second: float
     total_seconds: float
+    baseline: Optional[str] = None
 
     def table(self) -> str:
         lines = []
@@ -202,19 +210,23 @@ class Stats:
 
 
 def run_batch(session: Session, agent, games: int, level: str,
-              progress_every: int = 0, capture: bool = True
+              progress_every: int = 1, capture: bool = True
               ) -> tuple[Stats, list[GameResult]]:
     info = describe(agent)
     results: list[GameResult] = []
     started = time.perf_counter()
-
-    for i in range(games):
-        r = play_game(session, agent, level, capture=capture)
-        results.append(r)
-        if progress_every and (i + 1) % progress_every == 0:
-            wins = sum(1 for x in results if x.won)
-            print(f"    {i + 1}/{games} games, {wins} wins "
-                  f"({wins / len(results):.1%})", flush=True)
+    reporter = BatchProgress(games, level, progress_every)
+    on_progress = reporter.on_move if reporter.live else None
+    reporter.start()
+    try:
+        for i in range(games):
+            reporter.begin_game(i)
+            r = play_game(session, agent, level, capture=capture,
+                          on_progress=on_progress)
+            results.append(r)
+            reporter.finish_game(r)
+    finally:
+        reporter.close()
 
     elapsed = time.perf_counter() - started
     progress = [r.progress for r in results]
@@ -239,6 +251,7 @@ def run_batch(session: Session, agent, games: int, level: str,
         games_per_second=len(results) / elapsed,
         moves_per_second=total_moves / elapsed,
         total_seconds=elapsed,
+        baseline=info.baseline,
     )
     return stats, results
 

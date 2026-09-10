@@ -28,7 +28,8 @@ from minebencher.agent import describe
 from minebencher.harness import run_and_record
 from minebencher.registry import (AGENTS_DIR, IncompleteBaselines, discover,
                                   instantiate, roster)
-from minebencher.report import BENCHMARKS_DIR, format_report
+from minebencher.report import (BENCHMARKS_DIR, format_report,
+                                  format_stats_report)
 from minebencher.session import Session
 from minebencher.store import DEFAULT_DB, ResultStore
 
@@ -64,10 +65,16 @@ def main():
     ap.add_argument("--db", type=Path, default=DEFAULT_DB,
                     help="cumulative database path (default: benchmarks/results_cumulative.db)")
     ap.add_argument("--no-record", action="store_true")
-    ap.add_argument("--progress-every", type=int, default=0)
+    ap.add_argument(
+        "--progress-every", type=int, default=1, metavar="N",
+        help="write a progress snapshot every N completed games "
+             "(default: 1; 0 disables). On a terminal, a live status "
+             "line also updates during each game.")
     args = ap.parse_args()
     if args.games <= 0:
         ap.error("--games must be greater than zero")
+    if args.progress_every < 0:
+        ap.error("--progress-every must be >= 0")
 
     try:
         agents = roster(found, extra=_candidates(found, args.only))
@@ -97,23 +104,27 @@ def main():
             cum_store = ResultStore(cum_db_path)
             stores.append(cum_store)
 
+    summaries = []
     try:
         with Session(level=levels[0]) as session:
             print(f"experiment {experiment_id}  pid={session.reader.pid}  "
                   f"{len(agents)} agent(s) (floor + "
                   f"{len(agents) - 2} candidate(s) + ceiling), "
-                  f"{len(levels)} level(s), N={args.games}\n")
-            for reg in agents:
+                  f"{len(levels)} level(s), N={args.games}  "
+                  f"({len(agents) * len(levels) * args.games} games total)\n")
+            for agent_i, reg in enumerate(agents, 1):
                 agent = instantiate(reg, args.seed)
                 try:
                     info = describe(agent)
                     role = (info.baseline or "candidate").upper()
-                    print(f"--- {role}  {info.fingerprint}  {info.label} ---")
+                    print(f"--- {role}  {info.fingerprint}  {info.label}  "
+                          f"({agent_i}/{len(agents)}) ---")
                     for level in levels:
                         stats, _ = run_and_record(
                             session, agent, args.games, level, store=stores,
                             seed=args.seed, experiment_id=experiment_id,
                             progress_every=args.progress_every)
+                        summaries.append(stats)
                         print(stats.table())
                         print()
                 finally:
@@ -122,20 +133,37 @@ def main():
         for s in stores:
             s.close()
 
+    comparison = None
+    exp_report_file = None
+    cum_report_file = None
     if exp_store and exp_dir and exp_db_path:
-        # Generate per-experiment report
         with ResultStore(exp_db_path) as run_store:
-            exp_report_text = format_report(run_store, experiment_id=experiment_id)
+            comparison = format_report(run_store, experiment_id=experiment_id)
         exp_report_file = exp_dir / f"report_{experiment_id}.txt"
-        exp_report_file.write_text(exp_report_text, encoding="utf-8")
+        exp_report_file.write_text(comparison, encoding="utf-8")
 
-        # Update cumulative report in benchmarks/
         cum_report_file = BENCHMARKS_DIR / "report_cumulative.txt"
         if cum_store:
             with ResultStore(args.db) as pool_store:
                 cum_report_text = format_report(pool_store, pooled=True)
             cum_report_file.write_text(cum_report_text, encoding="utf-8")
+    elif summaries:
+        comparison = format_stats_report(summaries, experiment_id=experiment_id)
 
+    if comparison or summaries:
+        print()
+        print(f"[experiment {experiment_id} summary]")
+        if comparison:
+            print(comparison, end="" if comparison.endswith("\n") else "\n")
+        if summaries:
+            print("\n  per-agent detail")
+            for stats in summaries:
+                role = (stats.baseline or "candidate").upper()
+                print(f"--- {role}  {stats.fingerprint}  {stats.agent} ---")
+                print(stats.table())
+                print()
+
+    if exp_store and exp_dir and exp_db_path and exp_report_file:
         try:
             rel_exp_dir = exp_dir.relative_to(_ROOT)
             rel_exp_db = exp_db_path.relative_to(_ROOT)
