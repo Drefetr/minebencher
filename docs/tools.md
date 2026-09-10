@@ -21,7 +21,9 @@ python src/tools/bench.py [options]
 - `--seed <S>`: PRNG seed passed to agents supporting seeding (default: `0`).
 - `--db <PATH>`: Cumulative database path (default: `benchmarks/results_cumulative.db`).
 - `--no-record`: Run benchmark without persisting results to SQLite.
-- `--progress-every <N>`: Print progress update every $N$ games.
+- `--progress-every <N>`: Write a progress snapshot every $N$ completed games (default: `1`; `0` disables). On an interactive terminal a live status line updates during each game with win/loss counts, mean guesses, throughput, and ETA. Compact flags: `W` wins, `L` losses, and when non-zero `S` stuck, `T` timeouts, `X` stalled, `U` unsound deaths.
+
+After the run, stdout reprints the experiment leaderboard (win rate, 95% CI, progress, vs floor/ceiling) and the per-agent detail tables so they are not lost under live progress output.
 
 Outputs are archived to:
 - `benchmarks/<id>/results_<id>.db` (isolated run database)

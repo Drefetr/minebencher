@@ -25,7 +25,7 @@ def pct(x: float) -> str:
     return f"{x * 100:5.1f}%"
 
 
-def _role_key(e: dict) -> tuple[int, float]:
+def _role_key(e) -> tuple[int, float]:
     b = e["baseline"] or ""
     rate = e["wins"] / e["games"] if e["games"] else 0.0
     if b == "ceiling":
@@ -35,12 +35,30 @@ def _role_key(e: dict) -> tuple[int, float]:
     return (1, -rate)
 
 
-def format_leaderboard(
-    store: ResultStore,
-    level: Optional[str] = None,
-    experiment_id: Optional[str] = None,
-) -> str:
-    rows = store.leaderboard(level, include_privileged=True, experiment_id=experiment_id)
+def rows_from_stats(batches) -> list[dict]:
+    """Turn in-memory `Stats` objects into leaderboard rows."""
+    rows = []
+    for s in batches:
+        rows.append({
+            "fingerprint": s.fingerprint,
+            "agent_id": s.agent_id,
+            "version": s.version,
+            "privileged": s.privileged,
+            "baseline": getattr(s, "baseline", None),
+            "level": s.level,
+            "games": s.games,
+            "wins": s.wins,
+            "illegal": s.illegal,
+            "stuck": s.stuck,
+            "timed_out": s.timed_out,
+            "stalled": s.stalled,
+            "unsound_deaths": s.unsound_deaths,
+            "mean_progress": s.mean_progress,
+        })
+    return rows
+
+
+def render_leaderboard(rows) -> str:
     if not rows:
         return "  no runs recorded yet\n"
 
@@ -109,6 +127,15 @@ def format_leaderboard(
     return out.getvalue()
 
 
+def format_leaderboard(
+    store: ResultStore,
+    level: Optional[str] = None,
+    experiment_id: Optional[str] = None,
+) -> str:
+    rows = store.leaderboard(level, include_privileged=True, experiment_id=experiment_id)
+    return render_leaderboard(rows)
+
+
 def format_history(store: ResultStore, key: str, level: Optional[str] = None) -> str:
     rows = store.history(key, level)
     if not rows:
@@ -157,4 +184,15 @@ def format_report(
             print("pooled across all recorded runs (not a single experiment)", file=out)
         print(f"results: {store.path}   labels: {', '.join(labels)}", file=out)
         out.write(format_leaderboard(store, level, experiment_id))
+    return out.getvalue()
+
+
+def format_stats_report(batches, experiment_id: Optional[str] = None) -> str:
+    """Leaderboard for a run that was not written to the store."""
+    out = io.StringIO()
+    labels = sorted({s.agent_id for s in batches})
+    if experiment_id:
+        print(f"experiment {experiment_id}", file=out)
+    print(f"results: (not recorded)   labels: {', '.join(labels)}", file=out)
+    out.write(render_leaderboard(rows_from_stats(batches)))
     return out.getvalue()
